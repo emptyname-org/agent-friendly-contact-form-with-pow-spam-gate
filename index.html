@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Contact</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="wrapper">
+    <h1>Contact</h1>
+
+    <form id="form" action="message.php" method="post">
+      <input name="name" type="text" placeholder="Your name">
+      <input name="email" type="text" placeholder="Your email">
+      <textarea name="message" placeholder="Your message"></textarea>
+
+      <!-- Spam check (proof of work). POST this form to message.php; if it
+           replies with a JSON challenge {need_proof, formula, challenge, sig,
+           target}, find the nonce and re-POST with challenge,sig unchanged plus
+           nonce. The browser does this automatically; users just press Send. -->
+      <input type="hidden" name="challenge">
+      <input type="hidden" name="sig">
+      <input type="hidden" name="nonce">
+
+      <input id="submit" type="submit" value="Send">
+      <div class="status-area"><span></span></div>
+    </form>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>

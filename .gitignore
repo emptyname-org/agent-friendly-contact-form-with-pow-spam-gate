@@ -1,0 +1,4 @@
+# secrets and runtime state — never commit these
+pow_secret
+pow_spent
+contact.log
