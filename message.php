@@ -1,6 +1,14 @@
 <?php
 /*
- * Drop-in contact-form handler with a proof-of-work spam gate (challenge-on-submit).
+ * Dumbouncer — drop-in contact-form handler with a proof-of-work spam gate
+ * (challenge-on-submit). Dumb bots bounce; humans and agents solve the proof.
+ *
+ * Single file: the hashcash helpers (issue / verify / single-use) are inlined at
+ * the bottom — no other PHP to include. The browser solver is script.js.
+ *
+ * Minimal install: drop this file next to your form, set POW_RECIPIENT below,
+ * point the form's `action` at it. The HMAC secret is generated automatically on
+ * the first request (see pow_secret()); nothing else is required.
  *
  * Protocol (no JavaScript required — the form's `action` is the only thing a
  * client must discover):
@@ -24,7 +32,11 @@
  */
 
 // ============================ CONFIG — edit this ============================
+
+// REQUIRED — the one thing you must set.
 define('POW_RECIPIENT',  'you@example.com');                       // where messages go
+
+// COMMON — sensible defaults; change to taste.
 define('POW_FROM',       'Website contact <noreply@example.com>'); // envelope/From identity
 define('POW_SUBJECT',    '[contact] ');                            // subject prefix
 
@@ -40,12 +52,16 @@ define('POW_BITS',       20);
 // cache: spent challenges are pruned POW_WINDOW seconds after issue.
 define('POW_WINDOW',     300);
 
-// In production, put these OUTSIDE the web root (e.g. __DIR__.'/../private/...'):
-define('POW_SECRET_FILE', __DIR__ . '/pow_secret');                // `openssl rand -hex 32 > pow_secret`
+// ADVANCED — paths and limits. Defaults work as-is (files land next to this
+// script). The secret is auto-generated on first run if POW_SECRET_FILE is
+// missing. For production, point these OUTSIDE the web root, e.g.
+// __DIR__.'/../private/pow_secret', and the PHP user must read pow_secret and
+// read/write pow_spent (and contact.log if logging).
+define('POW_SECRET_FILE', __DIR__ . '/pow_secret');                // HMAC secret (auto-created if absent)
+define('POW_SPENT_FILE',  __DIR__ . '/pow_spent');                 // single-use cache
 define('POW_LOG_FILE',    __DIR__ . '/contact.log');               // submission log (or '' to disable)
+define('POW_MAXNONCE',    19);                                     // max decimal digits accepted for a nonce
 // ===========================================================================
-
-require __DIR__ . '/pow.php';
 
 function pval($k) { $v = $_POST[$k] ?? ''; return is_string($v) ? trim($v) : ''; }
 
@@ -113,3 +129,102 @@ $headers = 'From: ' . POW_FROM . "\r\n"
          . "Content-Type: text/plain; charset=utf-8\r\n";
 $ok = mail(POW_RECIPIENT, $subject, $body, $headers);
 finish($ok ? '1' : '2', $ok ? 'sent' : 'mail-fail');
+
+
+// ===================== Hashcash proof-of-work helpers ======================
+// SHA-256 partial preimage, bitcoin-style target. Pure PHP: issuing a challenge
+// is one HMAC, verifying a solution is one SHA-256. No bignum, no extensions
+// beyond the always-available `hash` extension.
+
+/* The HMAC secret. Read from POW_SECRET_FILE; if that file is absent, generate
+   a 256-bit secret and write it (0600) on first run, so a fresh install needs
+   no `openssl` step. 'x' open mode makes creation atomic: concurrent first
+   requests can't clobber each other — the loser falls through and re-reads the
+   winner's secret. Pre-create the file yourself (outside the web root) to skip
+   auto-generation entirely. Returns '' only if no secret exists and none can be
+   written, which surfaces as a "misconfigured" 500. */
+function pow_secret() {
+  static $s = null;
+  if ($s !== null) return $s;
+  if (is_readable(POW_SECRET_FILE)) {
+    $s = trim(file_get_contents(POW_SECRET_FILE));
+    if ($s !== '') return $s;
+  }
+  $new = bin2hex(random_bytes(32));
+  $fh = @fopen(POW_SECRET_FILE, 'x');
+  if ($fh) {
+    @chmod(POW_SECRET_FILE, 0600);
+    fwrite($fh, $new . "\n");
+    fclose($fh);
+    return $s = $new;
+  }
+  $s = is_readable(POW_SECRET_FILE) ? trim(file_get_contents(POW_SECRET_FILE)) : '';
+  return $s;
+}
+
+/* Largest allowed value of the first 4 bytes of the digest = require that many
+   leading zero bits.  target = 2^(32-BITS) - 1. */
+function pow_target() { return (2 ** (32 - POW_BITS)) - 1; }
+
+function pow_sign($challenge, $key) { return hash_hmac('sha256', $challenge, $key); }
+
+/* Issue a fresh, signed challenge: array{challenge, sig, target, bits} or null. */
+function pow_issue() {
+  $key = pow_secret();
+  if ($key === '') return null;
+  $challenge = bin2hex(random_bytes(8)) . ':' . time();   // random : unix-time
+  return array(
+    'challenge' => $challenge,
+    'sig'       => pow_sign($challenge, $key),
+    'target'    => pow_target(),
+    'bits'      => POW_BITS,
+  );
+}
+
+/* Verify a submitted (challenge, sig, nonce). One SHA-256 — microseconds.
+   Checks: we signed this challenge (timing-safe), it is still fresh, and
+   the first 4 bytes of SHA-256(challenge ":" nonce) are <= target. */
+function pow_verify($challenge, $sig, $nonce) {
+  $key = pow_secret();
+  if ($key === '' || $challenge === '' || $sig === '' || $nonce === '') return false;
+  if (!ctype_digit($nonce) || strlen($nonce) > POW_MAXNONCE) return false;
+  if (!hash_equals(pow_sign($challenge, $key), $sig)) return false;
+  $parts = explode(':', $challenge);
+  $ts = isset($parts[1]) ? (int)$parts[1] : 0;
+  $now = time();
+  if ($ts <= 0 || ($now - $ts) > POW_WINDOW || ($ts - $now) > 60) return false;
+  $h = hash('sha256', $challenge . ':' . $nonce);
+  return hexdec(substr($h, 0, 8)) <= pow_target();
+}
+
+/* Single-use enforcement: record a challenge as spent and return true the FIRST
+   time it is seen, false on any later replay (within the freshness window).
+   File-backed, locked, self-pruning. Fails OPEN (returns true) if the cache file
+   is unwritable, so a permissions problem degrades to "no replay protection"
+   rather than breaking the form — see README. Call only AFTER pow_verify() passes. */
+function pow_spend($challenge) {
+  $fh = @fopen(POW_SPENT_FILE, 'c+');
+  if (!$fh) return true;
+  if (!flock($fh, LOCK_EX)) { fclose($fh); return true; }
+  $now = time();
+  $cutoff = $now - POW_WINDOW - 120;
+  $keep = array();
+  $seen = false;
+  rewind($fh);
+  while (($line = fgets($fh)) !== false) {
+    $line = rtrim($line, "\n");
+    if ($line === '') continue;
+    $sp = strpos($line, ' ');
+    if ($sp === false) continue;
+    $ts = (int)substr($line, 0, $sp);
+    $c  = substr($line, $sp + 1);
+    if ($ts < $cutoff) continue;          // prune expired
+    if ($c === $challenge) $seen = true;
+    $keep[] = $ts . ' ' . $c;
+  }
+  if (!$seen) $keep[] = $now . ' ' . $challenge;
+  ftruncate($fh, 0); rewind($fh);
+  fwrite($fh, $keep ? implode("\n", $keep) . "\n" : '');
+  fflush($fh); flock($fh, LOCK_UN); fclose($fh);
+  return !$seen;
+}

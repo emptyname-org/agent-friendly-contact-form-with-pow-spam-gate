@@ -1,4 +1,4 @@
-/* Contact form — hashcash proof-of-work, challenge-on-submit.
+/* Dumbouncer — browser solver for the hashcash proof-of-work, challenge-on-submit.
    Flow: POST the form. If the server replies with a JSON challenge
    {challenge, sig, target}, search for an integer nonce such that the first
    4 bytes of SHA-256(challenge + ":" + nonce), as a big-endian integer, are
@@ -62,9 +62,23 @@
     if (!statusTxt) return;
     statusTxt.style.color = color; statusTxt.style.display = "block"; statusTxt.innerText = msg;
   }
+
+  /* animated "Sending…" — cycles 0–3 trailing dots while the form is busy */
+  var dotsTimer = null;
+  function startDots(base, color) {
+    stopDots();
+    var n = 0;
+    setStatus(base, color);
+    dotsTimer = setInterval(function () {
+      n = (n + 1) % 4;
+      statusTxt.innerText = base + new Array(n + 1).join(".");
+    }, 400);
+  }
+  function stopDots() { if (dotsTimer) { clearInterval(dotsTimer); dotsTimer = null; } }
+
   function done(msg, color, reset) {
-    busy = false; form.classList.remove("disabled"); setStatus(msg, color);
-    if (reset) { form.reset(); setTimeout(function () { if (statusTxt) statusTxt.style.display = "none"; }, 4000); }
+    busy = false; stopDots(); form.classList.remove("disabled"); setStatus(msg, color);
+    if (reset) form.reset();   /* clear the fields, but keep the status message on screen */
   }
 
   /* search for a nonce, fill hidden fields, then cb() */
@@ -100,7 +114,7 @@
         solve(ch, function () { post(false); });
         return;
       }
-      if (txt === "1")      done("Your message has been sent", "#0a0", true);
+      if (txt === "1")      done("Message sent", "#0a0", true);
       else if (txt === "3") done("Please enter a real email address", "orange");
       else if (txt === "4") done("Please enter an email and a message", "orange");
       else                  done("Failed to send your message", "orange");
@@ -116,7 +130,7 @@
       setStatus("Please enter an email and a message", "orange"); return;
     }
     busy = true; form.classList.add("disabled");
-    setStatus("Sending your message…", "#0a0");
+    startDots("Sending", "#0a0");
     post(true);
   });
 })();
