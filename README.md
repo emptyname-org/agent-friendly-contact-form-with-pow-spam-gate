@@ -80,9 +80,9 @@ include.
 On first use, Dumbouncer creates a 256-bit HMAC secret automatically (`0600`).
 Every other setting has a working default.
 
-### Production
+### Optional
 
-The CONFIG block holds every setting. For production, place the secret and
+The CONFIG block holds every setting. For production, you may want to place the secret and
 runtime files outside the web root:
 
 ```php
