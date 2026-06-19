@@ -1,6 +1,9 @@
 # Dumbouncer
 
-**Dumb bots bounce.** An intelligents agent friendly proof-of-work spam gate for contact forms.
+**Dumb bots bounce.** 
+
+
+## An Intelligent Agents Friendly, POW Spam Gate for Contact Forms.
 
 Every sender must solve a configurable hashcash challenge before a message is accepted:
 
