@@ -1,18 +1,17 @@
 # Dumbouncer
 
-**Dumb bots bounce.** 
-
+**Dumb bots bounce.**
 
 ## An intelligent-agent-friendly, proof-of-work spam gate for contact forms
 
 Every sender must solve a configurable hashcash challenge before a message is accepted:
 
-- **Intelligent Agents** - the challenge states its own rules, so automated clients can solve it.
+- **Intelligent agents** - the challenge states its own rules, so automated clients can solve it.
 - **Humans** - the browser solves it automatically. There is no CAPTCHA.
 - **Dumb bots** - clients that POST without running the challenge are rejected.
 
 Dumbouncer does not stop clients that intentionally run the solver. It adds a
-small, configurable, CPU cost to each accepted message.
+small, configurable CPU cost to each accepted message.
 
 No database. No third party. PHP and JavaScript only.
 
